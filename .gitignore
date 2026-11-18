@@ -1,0 +1,20 @@
+# build output
+build/
+*.o
+*.a
+*.dylib
+
+# kernelcaches and other large binaries pulled at runtime
+*.macho
+*.im4p
+*.lzfse
+*.img
+*.kc
+*.ipsw
+*.zip
+
+# editor / os
+.DS_Store
+.vscode/
+.idea/
+*.swp
