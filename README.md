@@ -1,6 +1,6 @@
 # Melatonin
 
-[![ci](https://github.com/USER/melatonin/actions/workflows/ci.yml/badge.svg)](https://github.com/USER/melatonin/actions/workflows/ci.yml)
+[![ci](https://github.com/mkz-lena/melatonin/actions/workflows/ci.yml/badge.svg)](https://github.com/mkz-lena/melatonin/actions/workflows/ci.yml)
 
 Rootful iOS 27 (A18) jailbreak pipeline, plus a Linux host simulator so the
 whole chain can be built and exercised without a device.
