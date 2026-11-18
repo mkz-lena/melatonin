@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: build
+        run: make all tools
+
+      - name: simulator assertions
+        run: make test
+
+      - name: offline image replay
+        run: make image-test
+
+      - name: trust cache and bundle install
+        run: make cli-test
+
+      - name: kernelcache tools
+        run: make tool-test
+
+      - name: patch diff
+        run: make diff-test
