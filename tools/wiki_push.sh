@@ -30,7 +30,7 @@ fi
 
 # mirror wiki/ into the checkout, removing stale pages
 if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete "$src/" "$work/wiki/"
+    rsync -a --delete --exclude='.git' "$src/" "$work/wiki/"
 else
     find "$work/wiki" -mindepth 1 -maxdepth 1 -type f -name '*.md' -delete
     cp -a "$src/." "$work/wiki/"
