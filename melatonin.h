@@ -8,6 +8,15 @@
 #define MELA_NAME      "melatonin"
 #define MELA_VERSION   "0.1.0"
 #define MELA_DOMAIN    "com.melatonin.app"
+
+/* jailbreak root. rootful: empty, everything lives at / (ldid in /usr/bin,
+   daemon in /usr/libexec, packages in /var/lib/dpkg). a rootless port would
+   define this as "/var/jb" and every path below follows automatically. */
+#ifndef MELA_ROOT
+#define MELA_ROOT ""
+#endif
+#define MELA_LDID      MELA_ROOT "/usr/bin/ldid"
+#define MELA_DAEMON    MELA_ROOT "/usr/libexec/melatonind"
 #define MELA_KERN_MIN  0xFFFFFFF000000000ULL
 #define MELA_KERN_MAX  0xFFFFFFF100000000ULL
 #define MELA_KV_ALIGN  0x200000ULL

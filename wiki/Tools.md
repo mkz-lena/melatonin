@@ -56,7 +56,11 @@ script.
 
 ```sh
 tools/device.sh        # version, build, whether it matches a public IPSW
+tools/device.sh dev    # developer-mode surface: DDI mount, DVT process table
 tools/device.sh fw     # what Apple still signs for this model
 ```
 
 Requires usbmuxd + libimobiledevice or pymobiledevice3. No jailbreak involved.
+`dev` is the one that matters on a beta build: a mounted `/System/Developer`
+means developer mode is on and DVT answers, which is an execution channel that
+does not need a re-signed app.

@@ -79,6 +79,12 @@ ordinary custom app. we do not need a parser bug or a 1-click to get code
 running inside the sandbox; we need a signing identity and a profile, both of
 which this phone has already been through.
 
+the developer disk image is not just installed, it is **mounted right now**
+(`/System/Developer`, personalized, read-only), so developer mode is on and the
+DVT services answer: `pymobiledevice3 developer dvt proclist` returns the running
+process table over the wire. that is a second execution channel that does not
+depend on re-signing anything.
+
 what that removes from the problem: entry, sandbox escape via app context, and
 the "how do we get bytes onto the device" question. what remains is exactly one
 thing — a kernel memory primitive reachable from a sandboxed process.

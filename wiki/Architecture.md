@@ -106,7 +106,8 @@ Mach-O in the trust cache, then refreshes the icon cache and restarts `installd`
 
 ## Sileo bootstrap
 
-`bootstrap/sileo.sh` builds the dpkg/apt skeleton under `/var/jb`, adds the
+`bootstrap/sileo.sh` builds the dpkg/apt skeleton directly under `/` (the
+rootful layout: `/usr/bin`, `/var/lib/dpkg`, `/etc/apt`), adds the
 Sileo repo and installs it. `bootstrap/app-install.sh <App.app>` is the shell
 equivalent of the C install path for already-extracted bundles.
 

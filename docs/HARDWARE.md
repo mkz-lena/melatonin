@@ -95,7 +95,7 @@ that is the value the kernel checks against the trust cache.
 - [ ] remount is writable, SSV bit clear
 - [ ] trust cache accepted a test cdhash
 - [ ] launchd job loaded and `--daemon` survives a respawn
-- [ ] Sileo bootstrap script completes, `/var/jb/usr/bin/sileo` exists
+- [ ] Sileo bootstrap script completes, `/usr/bin/sileo` exists
 
 ## Notes on the target
 

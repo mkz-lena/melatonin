@@ -8,7 +8,7 @@ SRC="$1"
 
 NAME=$(basename "$SRC")
 DEST="/Applications/$NAME"
-LDID=/var/jb/usr/bin/ldid
+LDID="${MELA_ROOT:-}/usr/bin/ldid"
 
 rm -rf "$DEST"
 cp -a "$SRC" "$DEST"

@@ -67,6 +67,18 @@ int sim_verify(void) {
              r ? r : "");
     ok &= check("launchd job", access(plist, R_OK) == 0);
 
+    /* the job must point at the rootful daemon path, not a rootless prefix */
+    {
+        char buf[1024] = {0};
+        FILE *f = fopen(plist, "r");
+        size_t n = f ? fread(buf, 1, sizeof buf - 1, f) : 0;
+        if (f) fclose(f);
+        ok &= check("launchd daemon path",
+                    n > 0 && strstr(buf, MELA_DAEMON) != NULL);
+        ok &= check("launchd daemon args",
+                    n > 0 && strstr(buf, "--daemon") != NULL);
+    }
+
     /* simulate drift, then let the daemon tick repair it */
     uint32_t zero = 0;
     kwrite(kaddr(g_off.cs_enforcement_disable), &zero, sizeof zero);

@@ -91,11 +91,12 @@ static const char *find_ldid(void) {
     static char buf[1024];
     const char *p = prefix();
 
-    if (snprintf(buf, sizeof buf, "%s/var/jb/usr/bin/ldid", p) > 0 &&
+    if (snprintf(buf, sizeof buf, "%s" MELA_LDID, p) > 0 &&
         access(buf, X_OK) == 0)
         return buf;
 
-    if (access("/usr/bin/ldid", X_OK) == 0) return "/usr/bin/ldid";
+    if (access(MELA_LDID, X_OK) == 0) return MELA_LDID;
+    /* last resort: a rootless install that predates MELA_ROOT */
     if (access("/var/jb/usr/bin/ldid", X_OK) == 0) return "/var/jb/usr/bin/ldid";
     return NULL;
 }

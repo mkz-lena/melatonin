@@ -37,7 +37,7 @@ static const char *kPlist =
 "<plist version=\"1.0\"><dict>\n"
 "  <key>Label</key><string>com.melatonin.app</string>\n"
 "  <key>ProgramArguments</key><array>\n"
-"    <string>/var/jb/usr/libexec/melatonind</string>\n"
+"    <string>" MELA_DAEMON "</string>\n"
 "    <string>--daemon</string>\n"
 "  </array>\n"
 "  <key>RunAtLoad</key><true/>\n"

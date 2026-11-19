@@ -25,8 +25,8 @@ static int is_macho(const char *path) {
 }
 
 static int sign_one(const char *path) {
-    char *ldid = "/var/jb/usr/bin/ldid";
-    if (access(ldid, X_OK) != 0) ldid = "/usr/bin/ldid";
+    char *ldid = MELA_LDID;
+    if (access(ldid, X_OK) != 0) ldid = "/var/jb/usr/bin/ldid";
     if (access(ldid, X_OK) != 0) {
         chmod(path, 0755);
         return 0;

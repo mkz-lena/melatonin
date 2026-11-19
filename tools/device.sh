@@ -101,8 +101,40 @@ for f in d.get("firmwares", []):
 PY
 }
 
+dev() {
+    ensure_usbmuxd || return 1
+    if ! have pymobiledevice3; then
+        say "needs pymobiledevice3"; return 1
+    fi
+    say "developer surface"
+    timeout 40 pymobiledevice3 mounter list 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    imgs = json.load(sys.stdin)
+except Exception:
+    print("  ddi        unknown"); raise SystemExit
+hit = [i for i in imgs if i.get("MountPath") == "/System/Developer"]
+if not hit:
+    print("  ddi        not mounted (developer mode off, or never paired)")
+    raise SystemExit
+i = hit[0]
+kind = i.get("DiskImageType", "?")
+mode = "ro" if i.get("IsReadOnly") else "rw"
+print(f"  ddi        {kind}, {mode}, /System/Developer")
+' 2>/dev/null
+    if timeout 30 pymobiledevice3 developer dvt proclist >/dev/null 2>&1; then
+        n=$(timeout 30 pymobiledevice3 developer dvt proclist 2>/dev/null \
+            | grep -c '"pid"')
+        say "  dvt        responding, ${n:-?} processes"
+    else
+        say "  dvt        not responding"
+    fi
+}
+
 case "${1:-info}" in
     info|"") info ;;
     fw|firmware) shift; firmware "${1:-}" ;;
-    *) say "usage: $0 [info|fw [version-prefix]]"; exit 2 ;;
+    dev) dev ;;
+    *) say "usage: $0 [info|dev|fw [version-prefix]]"; exit 2 ;;
 esac
