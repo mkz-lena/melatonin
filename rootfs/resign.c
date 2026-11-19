@@ -7,6 +7,8 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 
+#include "melatonin.h"
+
 extern char **environ;
 
 #define MH_MAGIC_64   0xfeedfacfUL

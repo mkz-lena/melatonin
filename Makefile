@@ -55,6 +55,28 @@ APP := $(BUILD)/Melatonin.app
 
 app: $(APP)
 
+# unsigned bundle for LiveContainer, cross-compiled on linux. livecontainer
+# re-signs guest apps with its own identity, so no developer certificate is
+# needed to get melatonin's own UI running on the phone.
+LINUX_APP  := $(BUILD)/Melatonin-linux.app
+THEOS      ?= $(HOME)/theos
+IOS_SDK    ?= $(THEOS)/sdks/iPhoneOS16.5.sdk
+IOS_CC_LIN ?= $(THEOS)/toolchain/linux/iphone/bin/clang
+
+app-linux: $(LINUX_APP)
+
+$(LINUX_APP): $(IOS_SRC) app/main.m app/Info.plist
+	@mkdir -p $(LINUX_APP)
+	$(IOS_CC_LIN) -target arm64-apple-ios17.0 -isysroot $(IOS_SDK) -I. \
+		-O2 -Wall -Wextra -fblocks -fobjc-arc \
+		-Wno-deprecated-declarations \
+		-framework UIKit -framework Foundation -framework IOKit \
+		-framework CoreFoundation $(IOS_SRC) app/main.m \
+		-o $(LINUX_APP)/Melatonin
+	cp app/Info.plist $(LINUX_APP)/Info.plist
+	ldid -S $(LINUX_APP)/Melatonin
+	@echo "unsigned bundle: $(LINUX_APP)"
+
 $(APP): $(IOS_SRC) app/main.m app/Info.plist app/entitlements.plist
 	@mkdir -p $(APP)
 	$(IOS_CC) $(IOS_CFLAGS) $(IOS_SRC) app/main.m $(IOS_LDFLAGS) \
@@ -122,6 +144,8 @@ diff-test: $(BUILD)/kdiff $(BUILD)/mkdiffpair
 	-@$(BUILD)/kdiff $(BUILD)/old.kc $(BUILD)/new.kc --top 6
 	@echo "--- json ---"
 	-@$(BUILD)/kdiff $(BUILD)/old.kc $(BUILD)/new.kc --json --top 3
+	@echo "--- guards ---"
+	-@$(BUILD)/kdiff $(BUILD)/old.kc $(BUILD)/new.kc --guards --top 3
 	@echo "--- identity ---"
 	@$(BUILD)/kdiff $(BUILD)/old.kc $(BUILD)/old.kc --top 3; echo "identical rc=$$? (0 = no changes, expected)"
 	@echo "--- exit codes ---"
@@ -147,6 +171,7 @@ help:
 	@echo "  make test       assertions; non-zero on failure"
 	@echo "  make ios        build/melatonind (needs xcrun + ldid)"
 	@echo "  make app        build/Melatonin.app"
+	@echo "  make app-linux  unsigned bundle for LiveContainer (theos sdk)"
 	@echo "  make tools      koff, kdiff and the rest"
 	@echo "  make tool-test  kernelcache parser + arithmetic model"
 	@echo "  make diff-test  synthetic kernelcache pair through kdiff"
@@ -157,4 +182,4 @@ help:
 	@echo "  tools/pull_kc.sh <build>   kernelcache + kext map from an IPSW"
 	@echo "  tools/device.sh            read the build off a connected phone"
 
-.PHONY: all ios sim run test image-test cli-test tools tool-test aa-model diff-test app clean help
+.PHONY: all ios sim run test image-test cli-test tools tool-test aa-model diff-test app app-linux clean help

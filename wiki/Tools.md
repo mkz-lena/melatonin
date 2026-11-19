@@ -40,6 +40,35 @@ build/kdiff old.kc new.kc --map old.map --map-new new.map \
            --kext com.apple.driver.AppleAVE2 --bytes 48
 ```
 
+`--guards` ranks regions by the shape of a bounds fix — new `cmp`, unsigned
+conditional branch, `csel` — and `--match <substr>` narrows the kext list:
+
+```sh
+build/kdiff old.kc new.kc --guards --top 20 --map old.map --map-new new.map
+```
+
+Read the survivors as instructions:
+
+```sh
+tools/kdis.sh build/kcache/24A5380h.macho 0xfffffff008552a8c 512
+tools/kguard.sh old.kc new.kc 0xfffffff00853917c 0xfffffff00854726c 128
+```
+
+`kdis.sh` cuts a VM range out of the fileset and disassembles it with the VM
+address as base; `kguard.sh` diffs the same range across two builds with
+addresses normalised.
+
+## livecontainer — run an unsigned bundle
+
+```sh
+make app-linux                        # theos sdk, arm64, ad-hoc signed
+tools/livecontainer.sh build/Melatonin-linux.app
+```
+
+LiveContainer re-signs guest apps with its own certificate, so this needs no
+developer identity and no Mac. It is the on-device execution channel for
+melatonin's own UI and for small probes.
+
 ## pull_kc — IPSW to kernelcache
 
 ```sh

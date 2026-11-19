@@ -55,6 +55,19 @@ research-mode only, iOS 27.2.
 `github.com/SKVLENT/iOS27-Research-Exploits`: static analysis + on-device bench,
 explicitly no exploit. useful methodology reference and CVE cross-index.
 
+## first 1-day localised on `24A5380h`
+
+`kdiff --guards` over 27.0.1 → 27.2 found a widened length check in core kernel
+text. 27.0.1 adds two 32-bit lengths, compares the (wrappable) sum against a
+capacity, then `memcpy`s the second chunk. 27.2 does the add in 64 bits with
+`uxtw`, so the sum cannot wrap. the pattern appears twice in the function and
+is present in the phone's beta 3 build at `0xfffffff008552cc8` and
+`0xfffffff008552fdc`.
+
+that is an out-of-bounds write shape, not a trigger: the subsystem that installs
+the function is still unidentified. addresses, instruction snippets and the
+open question are in `docs/EXPLOIT.md`.
+
 ## see also
 
 - `docs/TARGETS.md` — the full CVE target table and A18 mitigation list

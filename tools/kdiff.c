@@ -71,6 +71,68 @@ struct region {
     const char *label;
 };
 
+/* --- aarch64 guard shapes ------------------------------------------------
+ * "improved bounds checking" is an added compare plus an unsigned
+ * conditional branch in front of a copy or an index. aarch64 is fixed width,
+ * so a linear scan finds those without a disassembler. this is a ranking
+ * signal, not a verdict: it says "read this region first", and the bytes say
+ * what the check actually is.
+ */
+struct gcount { int insn, cmp, ubr, csel, cbz, ret, bl; };
+
+static void guard_scan(const uint8_t *p, uint64_t len, struct gcount *g) {
+    memset(g, 0, sizeof *g);
+    if (!p) return;
+    for (uint64_t off = 0; off + 4 <= len; off += 4) {
+        uint32_t w;
+        memcpy(&w, p + off, 4);
+        g->insn++;
+        /* cmp xN, #imm / cmp xN, xM */
+        if (((w & 0xFFC00000u) == 0xF1000000u ||
+             (w & 0xFF200000u) == 0xEB000000u) && (w & 0x1Fu) == 31u)
+            g->cmp++;
+        /* b.hs / b.lo / b.hi / b.ls */
+        if ((w & 0xFF000010u) == 0x54000000u) {
+            unsigned c = w & 0xFu;
+            if (c == 2u || c == 3u || c == 8u || c == 9u) g->ubr++;
+        }
+        /* csel / csinc: clamp instead of branch */
+        if ((w & 0x7FE00C00u) == 0x1A800000u ||
+            (w & 0x7FE00C00u) == 0x1A800400u)
+            g->csel++;
+        if ((w & 0x7E000000u) == 0x34000000u) g->cbz++;
+        if ((w & 0xFC000000u) == 0x94000000u) g->bl++;
+        if (w == 0xD65F03C0u) g->ret++;
+    }
+}
+
+static int guard_gain(const struct gcount *o, const struct gcount *n) {
+    return (n->ubr - o->ubr) * 2 + (n->cmp - o->cmp) + (n->csel - o->csel);
+}
+
+/* regions that fall in a data segment decode like code often enough to fill
+   the ranking with noise. only scan executable segments. */
+static int va_in_code(const struct image *im, uint64_t va) {
+    for (int i = 0; i < im->nseg; i++) {
+        const struct seg64 *s = &im->seg[i];
+        if (!s->filesize || va < s->vmaddr || va - s->vmaddr >= s->filesize)
+            continue;
+        if (!strcmp(s->segname, "__TEXT_EXEC") ||
+            !strcmp(s->segname, "__TEXT") ||
+            !strcmp(s->segname, "__PRELINK_TEXT") ||
+            !strcmp(s->segname, "__TEXT_BOOT_EXEC"))
+            return 1;
+    }
+    return 0;
+}
+
+struct guardhit {
+    const char *kext;
+    char seg[17];
+    uint64_t old_va, new_va, old_len, new_len;
+    struct gcount o, n;
+};
+
 struct kmap { uint64_t addr, size; char *name; };
 static struct kmap *g_old_map, *g_new_map;
 static size_t g_nold, g_nnew;
@@ -308,11 +370,20 @@ static int acc_push(struct acc *a, struct region r) {
         a->regs = nr;
         a->cap = nc;
     }
-    a->regs[a->n++] = r;
+    a->regs[a->n] = r;
+    if (r.label) a->regs[a->n].label = strdup(r.label);
+    a->n++;
     a->old_bytes += r.old_len;
     a->new_bytes += r.new_len;
     a->same_bytes += r.same;
     return 0;
+}
+
+static void acc_free(struct acc *a) {
+    for (size_t i = 0; i < a->n; i++) free((void *)a->regs[i].label);
+    free(a->regs);
+    a->regs = NULL;
+    a->n = a->cap = 0;
 }
 
 /* diff two byte windows that correspond to each other */
@@ -486,7 +557,7 @@ static int diff_one_kext(const struct image *a, const struct image *b,
         if (!p || !q) continue;
 
         char label[256];
-        snprintf(label, sizeof label, "%s:%s", ka->name, qa->segname);
+        snprintf(label, sizeof label, "%s:%.16s", ka->name, qa->segname);
         size_t la = qa->filesize, lb = qb->filesize;
         if (la > (1u << 28)) la = 1u << 28;
         if (lb > (1u << 28)) lb = 1u << 28;
@@ -517,7 +588,8 @@ int main(int argc, char **argv) {
     const char *pa = NULL, *pb = NULL;
     const char *mapfile = NULL, *mapfile_new = NULL, *kext = NULL;
     long min_anchor = 4, top = 40, show_bytes = 32;
-    int json = 0, segs = 0, all_kexts = 0;
+    int json = 0, segs = 0, all_kexts = 0, guards = 0;
+    const char *match = NULL;
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--min") && i + 1 < argc) min_anchor = strtol(argv[++i], NULL, 0);
@@ -528,6 +600,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--kext") && i + 1 < argc) kext = argv[++i];
         else if (!strcmp(argv[i], "--kexts")) all_kexts = 1;
         else if (!strcmp(argv[i], "--segs")) segs = 1;
+        else if (!strcmp(argv[i], "--guards")) guards = 1;
+        else if (!strcmp(argv[i], "--match") && i + 1 < argc) match = argv[++i];
         else if (!strcmp(argv[i], "--json")) json = 1;
         else if (!pa) pa = argv[i];
         else pb = argv[i];
@@ -535,7 +609,8 @@ int main(int argc, char **argv) {
     if (!pa) {
         fprintf(stderr,
             "usage: kdiff <old.kc> <new.kc> [--kext id] [--map old.map] [--map-new new.map]\n"
-            "              [--segs] [--min blocks] [--top n] [--bytes n] [--json]\n");
+            "              [--segs] [--min blocks] [--top n] [--bytes n] [--json]\n"
+            "              [--guards] [--match substr]\n");
         return 2;
     }
     if (!pb) pb = pa;
@@ -573,24 +648,57 @@ int main(int argc, char **argv) {
         }
         struct kstat *ks = NULL;
         size_t nk = 0, kcap = 0;
+        struct guardhit *hits = NULL;
+        size_t nh = 0, hcap = 0;
 
         for (size_t i = 0; i < g_nold; i++) {
             const struct kmap *ka = &g_old_map[i];
             const struct kmap *kb = map_find(g_new_map, g_nnew, ka->name);
             if (!kb || ka->size < 8192) continue;
+            if (match && !strstr(ka->name, match)) continue;
 
             struct acc one;
             memset(&one, 0, sizeof one);
             if (diff_one_kext(&a, &b, ka, kb, min_anchor, &one)) {
-                free(one.regs);
+                acc_free(&one);
                 continue;
             }
-            if (!one.n) { free(one.regs); continue; }
+            if (!one.n) { acc_free(&one); continue; }
+
+            if (guards) {
+                for (size_t r = 0; r < one.n; r++) {
+                    struct region *g = &one.regs[r];
+                    struct gcount go, gn;
+                    guard_scan(va_bytes(&a, g->old_va), g->old_len, &go);
+                    guard_scan(va_bytes(&b, g->new_va), g->new_len, &gn);
+                    if (gn.insn < 8 || guard_gain(&go, &gn) < 2) continue;
+                    if (!va_in_code(&b, g->new_va)) continue;
+                    /* a patch adds a few instructions, it does not move the
+                       whole segment. huge growth is layout, not a guard. */
+                    if (g->new_len > g->old_len + 512 ||
+                        g->old_len > g->new_len + 512) continue;
+                    if (nh == hcap) {
+                        hcap = hcap ? hcap * 2 : 64;
+                        struct guardhit *nhr = realloc(hits, hcap * sizeof *nhr);
+                        if (!nhr) break;
+                        hits = nhr;
+                    }
+                    struct guardhit h;
+                    memset(&h, 0, sizeof h);
+                    const char *seg = g->label ? strrchr(g->label, ':') : NULL;
+                    snprintf(h.seg, sizeof h.seg, "%.16s", seg ? seg + 1 : "-");
+                    h.kext = ka->name;
+                    h.old_va = g->old_va; h.new_va = g->new_va;
+                    h.old_len = g->old_len; h.new_len = g->new_len;
+                    h.o = go; h.n = gn;
+                    hits[nh++] = h;
+                }
+            }
 
             if (nk == kcap) {
                 kcap = kcap ? kcap * 2 : 64;
                 struct kstat *nr = realloc(ks, kcap * sizeof *nr);
-                if (!nr) { free(one.regs); return 1; }
+                if (!nr) { acc_free(&one); return 1; }
                 ks = nr;
             }
             ks[nk].name = ka->name;
@@ -600,7 +708,7 @@ int main(int argc, char **argv) {
             ks[nk].ch_new = one.new_bytes;
             ks[nk].regions = one.n;
             nk++;
-            free(one.regs);
+            acc_free(&one);
         }
 
         qsort(ks, nk, sizeof *ks, kstat_cmp);
@@ -616,6 +724,21 @@ int main(int argc, char **argv) {
                        (unsigned long long)ks[i].new_size,
                        (unsigned long long)ks[i].ch_old,
                        (unsigned long long)ks[i].ch_new, ks[i].regions);
+            printf("],\"guards\":[");
+            for (size_t i = 0; i < nh; i++)
+                printf("%s{\"kext\":\"%s\",\"old_va\":\"0x%llx\","
+                       "\"new_va\":\"0x%llx\",\"old_len\":%llu,\"new_len\":%llu,"
+                       "\"cmp_old\":%d,\"cmp_new\":%d,"
+                       "\"ubr_old\":%d,\"ubr_new\":%d,"
+                       "\"csel_old\":%d,\"csel_new\":%d}",
+                       i ? "," : "", hits[i].kext,
+                       (unsigned long long)hits[i].old_va,
+                       (unsigned long long)hits[i].new_va,
+                       (unsigned long long)hits[i].old_len,
+                       (unsigned long long)hits[i].new_len,
+                       hits[i].o.cmp, hits[i].n.cmp,
+                       hits[i].o.ubr, hits[i].n.ubr,
+                       hits[i].o.csel, hits[i].n.csel);
             printf("]}\n");
         } else {
             printf("old %s\nnew %s\n", pa, pb);
@@ -629,9 +752,39 @@ int main(int argc, char **argv) {
                        (unsigned long long)ks[i].ch_old,
                        (unsigned long long)ks[i].ch_new,
                        ks[i].regions);
+
+            if (guards) {
+                /* code-shaped hits first: a region with a ret or a bl is a
+                   function, one without is probably a table that decoded. */
+                for (size_t i = 0; i < nh; i++)
+                    for (size_t j = i + 1; j < nh; j++) {
+                        int ci = hits[i].n.ret || hits[i].n.bl;
+                        int cj = hits[j].n.ret || hits[j].n.bl;
+                        int gi = guard_gain(&hits[i].o, &hits[i].n) + ci * 1000;
+                        int gj = guard_gain(&hits[j].o, &hits[j].n) + cj * 1000;
+                        if (gj > gi) {
+                            struct guardhit t = hits[i];
+                            hits[i] = hits[j];
+                            hits[j] = t;
+                        }
+                    }
+                printf("\n%zu guard-shaped regions (compare / unsigned branch / "
+                       "csel gained)\n\n", nh);
+                printf("%-44s %-13s %11s %11s %s\n",
+                       "kext", "segment", "cmp", "ubr", "old_va");
+                for (size_t i = 0; i < nh; i++) {
+                    printf("%-44s %-13.13s %4d->%-4d %4d->%-4d 0x%llx  %s\n",
+                           hits[i].kext, hits[i].seg,
+                           hits[i].o.cmp, hits[i].n.cmp,
+                           hits[i].o.ubr, hits[i].n.ubr,
+                           (unsigned long long)hits[i].old_va,
+                           hits[i].n.ret || hits[i].n.bl ? "code" : "data?");
+                }
+            }
         }
+        free(hits);
         free(ks);
-        free(acc.regs);
+        acc_free(&acc);
         free(a.data); free(a.sym);
         free(b.data); free(b.sym);
         for (size_t i = 0; i < g_nold; i++) free(g_old_map[i].name);
@@ -668,15 +821,40 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* biggest first */
+    /* biggest first, or most guard-shaped first when --guards is on */
+    int *gain = NULL;
+    if (guards) {
+        gain = calloc(acc.n ? acc.n : 1, sizeof *gain);
+        for (size_t i = 0; i < acc.n; i++) {
+            struct gcount go, gn;
+            guard_scan(va_bytes(&a, acc.regs[i].old_va), acc.regs[i].old_len, &go);
+            guard_scan(va_bytes(&b, acc.regs[i].new_va), acc.regs[i].new_len, &gn);
+            int gg = guard_gain(&go, &gn);
+            if (acc.regs[i].new_len >= 128 && !gn.ret && !gn.bl) gg -= 1000;
+            if (!va_in_code(&b, acc.regs[i].new_va)) gg = 0;
+            if (acc.regs[i].new_len > acc.regs[i].old_len + 512 ||
+                acc.regs[i].old_len > acc.regs[i].new_len + 512) gg = 0;
+            gain[i] = gn.insn >= 8 ? gg : 0;
+        }
+    }
     for (size_t i = 0; i < acc.n; i++)
-        for (size_t j = i + 1; j < acc.n; j++)
-            if (acc.regs[j].old_len + acc.regs[j].new_len >
-                acc.regs[i].old_len + acc.regs[i].new_len) {
+        for (size_t j = i + 1; j < acc.n; j++) {
+            int better;
+            if (guards)
+                better = gain[j] != gain[i]
+                    ? gain[j] > gain[i]
+                    : acc.regs[j].old_len + acc.regs[j].new_len >
+                      acc.regs[i].old_len + acc.regs[i].new_len;
+            else
+                better = acc.regs[j].old_len + acc.regs[j].new_len >
+                         acc.regs[i].old_len + acc.regs[i].new_len;
+            if (better) {
                 struct region t = acc.regs[i];
                 acc.regs[i] = acc.regs[j];
                 acc.regs[j] = t;
+                if (gain) { int g = gain[i]; gain[i] = gain[j]; gain[j] = g; }
             }
+        }
 
     size_t lim = (size_t)top < acc.n ? (size_t)top : acc.n;
 
@@ -735,6 +913,21 @@ int main(int argc, char **argv) {
             if (kx && !kext) printf("  [%s +0x%llx]", kx, (unsigned long long)kd);
             printf("\n");
 
+            if (guards) {
+                struct gcount go, gn;
+                guard_scan(va_bytes(&a, acc.regs[i].old_va),
+                           acc.regs[i].old_len, &go);
+                guard_scan(va_bytes(&b, acc.regs[i].new_va),
+                           acc.regs[i].new_len, &gn);
+                printf("    cmp %d->%d  ubr %d->%d  csel %d->%d%s\n",
+                       go.cmp, gn.cmp, go.ubr, gn.ubr, go.csel, gn.csel,
+                       gn.insn >= 8 && gain[i] >= 2
+                           ? (!gn.ret && !gn.bl
+                              ? "  guard? (no ret/bl: may be data)"
+                              : "  GUARD")
+                           : "");
+            }
+
             if (show_bytes > 0) {
                 uint64_t n2 = (uint64_t)show_bytes;
                 if (n2 > acc.regs[i].old_len) n2 = acc.regs[i].old_len;
@@ -753,11 +946,13 @@ int main(int argc, char **argv) {
         }
     }
 
-    free(acc.regs);
+    int changed = acc.n ? 1 : 0;
+    free(gain);
+    acc_free(&acc);
     free(a.data); free(a.sym);
     free(b.data); free(b.sym);
     for (size_t i = 0; i < g_nold; i++) free(g_old_map[i].name);
     for (size_t i = 0; i < g_nnew; i++) free(g_new_map[i].name);
     free(g_old_map); free(g_new_map);
-    return acc.n ? 1 : 0;   /* like diff(1): 0 same, 1 different */
+    return changed;   /* like diff(1): 0 same, 1 different */
 }
